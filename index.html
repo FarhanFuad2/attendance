@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Attendance Dashboard</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#f5f7fb;font-family:Arial,sans-serif;color:#222;font-size:14px}
+.wrap{max-width:830px;margin:0 auto;padding:24px 16px}
+.top{display:flex;justify-content:space-between;align-items:flex-start}
+h1{font-size:20px;margin:0 0 14px}h3{font-size:15px;margin:0 0 14px}
+.card{background:#fff;border-radius:12px;padding:20px;margin-bottom:15px;box-shadow:0 1px 6px rgba(0,0,0,.06)}
+label{display:block;margin:12px 0 5px;font-size:13px}
+input{width:100%;padding:10px;border:1px solid #ccc;border-radius:8px;font-size:13px}
+button{background:#222;color:#fff;border:0;border-radius:8px;padding:10px 14px;font-weight:bold;cursor:pointer}
+.full{width:100%;margin-top:18px}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.stat{background:#f8f9fb;border-radius:10px;padding:14px;text-align:center}
+.stat b{display:block;font-size:22px;margin-top:4px}
+.msg{padding:10px;border-radius:8px;margin-top:12px;background:#fde8e8;color:#9b1c1c}
+.msg.ok{background:#e6f6ea;color:#1a6b2f}
+.scroll{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px;white-space:nowrap}
+th,td{padding:8px;border:1px solid #ccc;text-align:left}
+th{background:#f3f4f6}
+.hide{display:none}
+.red{color:#d00;font-weight:bold;font-size:12px}
+#login{max-width:380px;margin:60px auto}
+@media(max-width:520px){.stats{grid-template-columns:1fr}}
+</style></head><body>
+<div class="wrap">
+
+<div id="login" class="card hide">
+  <h3>Attendance Login</h3>
+  <label>Name</label><input id="lname" autocomplete="off">
+  <label>PIN</label><input id="lpin" type="password">
+  <button class="full" onclick="login()">Login</button>
+  <div id="lmsg"></div>
+</div>
+
+<div id="app" class="hide">
+  <div class="top">
+    <div><h1>Attendance Dashboard</h1><div id="welcome"></div></div>
+    <button onclick="logout()">Logout</button>
+  </div>
+  <div class="card" style="margin-top:14px">
+    <h3>Submit Attendance</h3>
+    <label>Date</label><input id="date" type="date">
+    <label>Name</label><input id="name" readonly>
+    <label>In Time <span class="red">(Check AM / PM)</span></label><input id="inTime" type="time">
+    <label>Class Break Start (Optional)</label><input id="bs" type="time">
+    <label>Class Break End (Optional)</label><input id="be" type="time">
+    <label>Out Time <span class="red">(Check AM / PM)</span></label><input id="outTime" type="time">
+    <button class="full" id="sbtn" onclick="submitAtt()">Submit Attendance</button>
+    <div id="smsg"></div>
+  </div>
+  <div class="card">
+    <h3>My Dashboard</h3>
+    <div class="stats">
+      <div class="stat">Total Working Days<b id="days">0</b></div>
+      <div class="stat">Total Working Hour<b id="hours">0h 00m</b></div>
+      <div class="stat">Total Amount<b id="amount">0 Tk</b></div>
+    </div>
+  </div>
+  <div class="card">
+    <h3>My Records</h3>
+    <div class="scroll"><table>
+      <thead><tr><th>Date</th><th>In</th><th>Out</th><th>Total Working Hour</th><th>Total Break</th><th>Total Working Hour (Excluding break)</th><th>Amount</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table></div>
+    <div id="rmsg"></div>
+  </div>
+</div>
+</div>
+
+<script>
+const API = "https://script.google.com/macros/s/AKfycbxo0JkSBJlOgOArG3eE5huZMppBfqx8uG_EjEG3X8_L332YSTbXh7wZPRvjG4b6zvIyoA/exec";
+const $ = id => document.getElementById(id);
+let user = JSON.parse(localStorage.getItem("att_user") || "null");
+
+async function call(body) {
+  const r = await fetch(API, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(body) });
+  return r.json();
+}
+function msg(id, text, ok) { $(id).innerHTML = text ? '<div class="msg' + (ok ? ' ok' : '') + '">' + text + '</div>' : ''; }
+
+function show(pre) {
+  $("login").classList.toggle("hide", !!user);
+  $("app").classList.toggle("hide", !user);
+  if (user) {
+    $("welcome").textContent = "Welcome, " + user.name;
+    $("name").value = user.name;
+    if (!$("date").value) $("date").value = new Date().toLocaleDateString("en-CA");
+    if (pre) render(pre);
+    else { const c = localStorage.getItem("att_cache_" + user.name); if (c) render(JSON.parse(c), true); load(); }
+  }
+}
+async function login() {
+  msg("lmsg", "Checking...", true);
+  try {
+    const n = $("lname").value.trim(), p = $("lpin").value.trim();
+    if (!n || !p) return msg("lmsg", "Enter name and PIN");
+    const r = await call({ action: "login", name: n, pin: p });
+    if (!r.ok) return msg("lmsg", r.error);
+    user = { name: r.name, pin: p };
+    localStorage.setItem("att_user", JSON.stringify(user));
+    msg("lmsg", ""); show(r);
+  } catch (e) { msg("lmsg", "Could not connect. Check the API link."); }
+}
+function logout() { localStorage.removeItem("att_user"); user = null; show(); }
+
+async function submitAtt() {
+  $("sbtn").disabled = true; msg("smsg", "Submitting...", true);
+  try {
+    const r = await call({ action: "submit", name: user.name, pin: user.pin, date: $("date").value,
+      inTime: $("inTime").value, breakStart: $("bs").value, breakEnd: $("be").value, outTime: $("outTime").value });
+    msg("smsg", r.ok ? r.message : r.error, r.ok);
+    if (r.ok) { ["inTime", "bs", "be", "outTime"].forEach(i => $(i).value = ""); render(r.rec); }
+  } catch (e) { msg("smsg", "Could not connect."); }
+  $("sbtn").disabled = false;
+}
+function fmtDate(s) {
+  const p = s.split("-");
+  return new Date(p[0], p[1] - 1, p[2]).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
+function dec(s) { // "5h 16m" -> 5.27
+  const m = s.match(/(\d+)h\s*(\d+)m/);
+  return m ? Number((Number(m[1]) + Number(m[2]) / 60).toFixed(2)) : s;
+}
+function mins(s) { const m = s.match(/(\d+)h\s*(\d+)m/); return m ? Number(m[1]) * 60 + Number(m[2]) : 0; }
+function hr(m) { return Number((m / 60).toFixed(2)) + " hr"; }
+function shortDate(s) { const p = s.split("-"); return p[2] + "/" + p[1] + "/" + p[0].slice(2); }
+function render(r, fromCache) {
+  if (!fromCache) localStorage.setItem("att_cache_" + user.name, JSON.stringify(r));
+  $("days").textContent = r.days; $("hours").textContent = r.hours; $("amount").textContent = r.amount + " Tk";
+  $("rows").innerHTML = r.rows.slice().reverse().map(x => "<tr><td>" + shortDate(x[0]) + "</td><td>" + x[2] + "</td><td>" + x[5] +
+    "</td><td>" + hr(mins(x[7]) + mins(x[6])) + "</td><td>" + x[6] + "</td><td>" + dec(x[7]) + " hr</td><td>" + x[8] + " Tk</td></tr>").join("");
+  msg("rmsg", r.rows.length ? "" : "No records yet", true);
+}
+async function load() {
+  try {
+    const r = await call({ action: "records", name: user.name, pin: user.pin });
+    if (!r.ok) return msg("rmsg", r.error);
+    render(r);
+  } catch (e) { msg("rmsg", "Could not load records."); }
+}
+show();
+</script>
+</body></html>
